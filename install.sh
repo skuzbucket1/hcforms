@@ -460,10 +460,13 @@ write_env() {
   else LLM_MODE="mock"; fi
   if [ -n "$MODEL_OVERRIDE" ]; then default_model="$MODEL_OVERRIDE"; fi
 
-  local cust_origin ops_origin ops_public profiles
+  local cust_origin ops_origin ops_public profiles cust_ops_url
   cust_origin="https://$HOST"
   if [ "$ROLE" = control-plane ]; then ops_origin="https://$HOST"; ops_public="https://$HOST"
   else ops_origin="https://$HOST:8443"; ops_public="https://$HOST:8443"; fi
+  # All-in-one: customer app reports usage to the co-located control plane.
+  cust_ops_url=""
+  if [ "$ROLE" = all ]; then cust_ops_url="http://control-plane:8080"; fi
 
   local db_password customer_jwt ops_jwt ops_shared
   db_password="$(gen_or_keep DB_PASSWORD 24)"
@@ -503,7 +506,7 @@ DEFAULT_LLM_MODEL_ID=$default_model
 EXTRACTION_MODEL_ID=claude-sonnet-4-6
 MONTHLY_TOKEN_CAP=0
 CUSTOMER_ALLOWED_ORIGINS=$cust_origin
-OPS_API_URL=
+OPS_API_URL=$cust_ops_url
 OPS_SHARED_SECRET=$ops_shared
 
 # Control plane
@@ -523,7 +526,17 @@ EOF
 bring_up() {
   cd "$APP_DIR"
   if [ "$IMAGE_SOURCE" = pull ]; then log "Pulling images from $REGISTRY ..."; docker compose pull; fi
-  log "Starting the stack..."
+  # Start Postgres first and ensure both DBs exist — don't rely on the first-boot
+  # init-script mount (it's skipped if pgdata already exists, which stranded
+  # hcforms_ops and broke control-plane login on early installs).
+  log "Starting Postgres..."
+  docker compose up -d postgres
+  local i
+  for i in $(seq 1 30); do docker compose exec -T postgres pg_isready -U hcforms >/dev/null 2>&1 && break; sleep 2; done
+  if ! docker compose exec -T postgres psql -U hcforms -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='hcforms_ops'" 2>/dev/null | grep -q 1; then
+    docker compose exec -T postgres psql -U hcforms -d postgres -c "CREATE DATABASE hcforms_ops" >/dev/null 2>&1 || true
+  fi
+  log "Starting the rest of the stack..."
   docker compose up -d --remove-orphans
 }
 
@@ -570,6 +583,25 @@ UNIT_EOF
   systemctl enable hcforms.service >/dev/null 2>&1 || true
 }
 
+# ── Register the local customer with the control plane (all-in-one only) ──────
+wire_local_customer() {
+  [ "$ROLE" = all ] || return 0
+  local secret; secret="$(existing_env OPS_SHARED_SECRET)"
+  [ -n "$secret" ] || return 0
+  cd "$APP_DIR"
+  local i
+  for i in $(seq 1 15); do
+    if docker compose exec -T postgres psql -U hcforms -d hcforms_ops -c \
+      "INSERT INTO customers (customer_id, display_name, region, app_domain, status, ops_shared_secret) VALUES ('${CUSTOMER_ID}','Local install','local','${HOST}','active','${secret}') ON CONFLICT (customer_id) DO UPDATE SET ops_shared_secret=EXCLUDED.ops_shared_secret, status='active';" >/dev/null 2>&1; then
+      log "Registered local customer '${CUSTOMER_ID}' with the control plane (usage will report)."
+      return 0
+    fi
+    sleep 2
+  done
+  warn "Could not auto-register the local customer (control-plane DB not ready); wire it manually later if needed."
+  return 0
+}
+
 # ── 11. Summary ──────────────────────────────────────────────────────────────
 summary() {
   local note="" llm_note="" ops_url="https://$HOST:8443/"
@@ -610,9 +642,8 @@ write_env
 render_nginx
 bring_up
 install_systemd
-if wait_healthy; then
-  summary
-else
+if ! wait_healthy; then
   warn "Services did not report healthy in time. Inspect: cd $APP_DIR && docker compose ps && docker compose logs"
-  summary
 fi
+wire_local_customer
+summary
