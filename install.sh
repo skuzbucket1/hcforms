@@ -306,9 +306,14 @@ resolve_host() {
   HOST="${HOST_OVERRIDE:-${DOMAIN:-}}"
   if [ -z "$HOST" ]; then
     HOST="$(curl -fsS --max-time 4 https://api.ipify.org 2>/dev/null || true)"
-    [ -z "$HOST" ] && HOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
-    [ -z "$HOST" ] && HOST="localhost"
   fi
+  if [ -z "$HOST" ]; then
+    HOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  if [ -z "$HOST" ]; then
+    HOST="localhost"
+  fi
+  return 0
 }
 
 # ── 6. TLS ───────────────────────────────────────────────────────────────────
