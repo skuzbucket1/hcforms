@@ -20,6 +20,9 @@ DOMAIN=""
 EMAIL=""
 HOST_OVERRIDE=""
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
+OPENAI_BASE_URL=""
+OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+MODEL_OVERRIDE=""
 REGISTRY="ghcr.io/skuzbucket1/hcforms"  # public ghcr namespace
 IMAGE_TAG="latest"
 REGISTRY_USER=""
@@ -51,6 +54,9 @@ while [ $# -gt 0 ]; do
     --email)           EMAIL="$2"; shift 2 ;;
     --host)            HOST_OVERRIDE="$2"; shift 2 ;;
     --anthropic-key)   ANTHROPIC_API_KEY="$2"; shift 2 ;;
+    --openai-base-url) OPENAI_BASE_URL="$2"; shift 2 ;;
+    --openai-key)      OPENAI_API_KEY="$2"; shift 2 ;;
+    --model)           MODEL_OVERRIDE="$2"; shift 2 ;;
     --pull)            IMAGE_SOURCE="pull"; shift ;;
     --build)           IMAGE_SOURCE="build"; shift ;;
     --registry)        REGISTRY="$2"; shift 2 ;;
@@ -114,6 +120,8 @@ services:
       AUTH_MODE: jwt
       LLM_MODE: ${LLM_MODE}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
       DEFAULT_LLM_MODEL_ID: ${DEFAULT_LLM_MODEL_ID}
       EXTRACTION_MODEL_ID: ${EXTRACTION_MODEL_ID}
       ALLOWED_ORIGINS: ${CUSTOMER_ALLOWED_ORIGINS}
@@ -144,6 +152,8 @@ services:
       FILES_DIR: /var/hcforms/files
       LLM_MODE: ${LLM_MODE}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
       DEFAULT_LLM_MODEL_ID: ${DEFAULT_LLM_MODEL_ID}
       EXTRACTION_MODEL_ID: ${EXTRACTION_MODEL_ID}
       OPS_API_URL: ${OPS_API_URL}
@@ -439,7 +449,11 @@ EOF
 
 # ── 8. Environment file ──────────────────────────────────────────────────────
 write_env() {
-  if [ -n "$ANTHROPIC_API_KEY" ]; then LLM_MODE="anthropic"; else LLM_MODE="mock"; fi
+  local default_model="claude-haiku-4-5-20251001"
+  if   [ -n "$OPENAI_BASE_URL" ];    then LLM_MODE="openai"; default_model="qwen3:14b"
+  elif [ -n "$ANTHROPIC_API_KEY" ];  then LLM_MODE="anthropic"
+  else LLM_MODE="mock"; fi
+  if [ -n "$MODEL_OVERRIDE" ]; then default_model="$MODEL_OVERRIDE"; fi
 
   local cust_origin ops_origin ops_public profiles
   cust_origin="https://$HOST"
@@ -478,7 +492,9 @@ CUSTOMER_ID=$CUSTOMER_ID
 CUSTOMER_JWT_SECRET=$customer_jwt
 LLM_MODE=$LLM_MODE
 ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
-DEFAULT_LLM_MODEL_ID=claude-haiku-4-5-20251001
+OPENAI_BASE_URL=$OPENAI_BASE_URL
+OPENAI_API_KEY=$OPENAI_API_KEY
+DEFAULT_LLM_MODEL_ID=$default_model
 EXTRACTION_MODEL_ID=claude-sonnet-4-6
 MONTHLY_TOKEN_CAP=0
 CUSTOMER_ALLOWED_ORIGINS=$cust_origin

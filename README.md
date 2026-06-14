@@ -17,9 +17,19 @@ curl -fsSL https://raw.githubusercontent.com/skuzbucket1/hcforms/main/install.sh
   | sudo bash -s -- --domain forms.example.com --email you@example.com --anthropic-key sk-ant-...
 ```
 
+Self-hosted model (Ollama / Qwen3 — keeps inference on your own box):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/skuzbucket1/hcforms/main/install.sh \
+  | sudo bash -s -- --openai-base-url https://ollama.zipprofile.com/v1 --openai-key <KEY> --model qwen3:14b
+```
+
 When it finishes it prints your URLs and the generated control-plane admin
 password. The default run uses **self-signed TLS + offline `mock` LLM**, so it
 works on a bare IP with zero external dependencies.
+
+LLM precedence: `--openai-base-url` → `openai`, else `--anthropic-key` →
+`anthropic`, else `mock`.
 
 ## What it installs
 
@@ -44,7 +54,10 @@ Routing (role `all`): customer app at `https://<host>/`, control plane at
 | `--role all\|customer\|control-plane` | `all` | which planes to install |
 | `--domain <fqdn>` / `--email <addr>` | — | enable Let's Encrypt TLS |
 | `--host <ip-or-name>` | auto | host used for origins + self-signed cert |
-| `--anthropic-key <key>` | — | enable real LLM fills (else `mock`) |
+| `--anthropic-key <key>` | — | use Anthropic for fills |
+| `--openai-base-url <url>` | — | OpenAI-compatible endpoint (e.g. Ollama `https://host/v1`) → `openai` mode |
+| `--openai-key <key>` | — | API key for the OpenAI-compatible endpoint |
+| `--model <id>` | per-mode default | model id to use (e.g. `qwen3:14b`) |
 | `--tag <tag>` | `latest` | image tag to pull |
 | `--registry <ref>` | `ghcr.io/skuzbucket1/hcforms` | image namespace |
 | `--registry-user` / `--registry-token` | — | auth for private images |
