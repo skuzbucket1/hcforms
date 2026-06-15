@@ -28,6 +28,10 @@ IMAGE_TAG="latest"
 REGISTRY_USER=""
 REGISTRY_TOKEN=""
 CUSTOMER_ID="local"
+OPS_URL_FLAG=""                         # control-plane public URL (wires a customer to it)
+OPS_SECRET_FLAG=""                      # control-plane-issued per-customer shared secret
+CUSTOMER_API_IMAGE_FLAG=""              # full image ref (overrides REGISTRY/TAG)
+CUSTOMER_WEB_IMAGE_FLAG=""              # full image ref (overrides REGISTRY/TAG)
 INSTALL_SYSTEMD=1
 
 APP_DIR="/opt/hcforms"
@@ -64,6 +68,10 @@ while [ $# -gt 0 ]; do
     --registry-user)   REGISTRY_USER="$2"; shift 2 ;;
     --registry-token)  REGISTRY_TOKEN="$2"; shift 2 ;;
     --customer-id)     CUSTOMER_ID="$2"; shift 2 ;;
+    --ops-url)         OPS_URL_FLAG="$2"; shift 2 ;;
+    --ops-secret)      OPS_SECRET_FLAG="$2"; shift 2 ;;
+    --customer-api-image) CUSTOMER_API_IMAGE_FLAG="$2"; shift 2 ;;
+    --customer-web-image) CUSTOMER_WEB_IMAGE_FLAG="$2"; shift 2 ;;
     --no-systemd)      INSTALL_SYSTEMD=0; shift ;;
     -h|--help)         usage ;;
     *) die "Unknown option: $1 (use --help)" ;;
@@ -291,8 +299,8 @@ resolve_images() {
       docker build -t "$CONTROL_PLANE_IMAGE" -f "$REPO_ROOT/control-plane/api/Dockerfile" "$REPO_ROOT/control-plane"
     fi
   else
-    CUSTOMER_API_IMAGE="$REGISTRY/customer-api:$IMAGE_TAG"
-    CUSTOMER_WEB_IMAGE="$REGISTRY/customer-web:$IMAGE_TAG"
+    CUSTOMER_API_IMAGE="${CUSTOMER_API_IMAGE_FLAG:-$REGISTRY/customer-api:$IMAGE_TAG}"
+    CUSTOMER_WEB_IMAGE="${CUSTOMER_WEB_IMAGE_FLAG:-$REGISTRY/customer-web:$IMAGE_TAG}"
     CONTROL_PLANE_IMAGE="$REGISTRY/control-plane:$IMAGE_TAG"
     if [ -n "$REGISTRY_TOKEN" ]; then
       log "Logging into ${REGISTRY%%/*}..."
@@ -464,15 +472,19 @@ write_env() {
   cust_origin="https://$HOST"
   if [ "$ROLE" = control-plane ]; then ops_origin="https://$HOST"; ops_public="https://$HOST"
   else ops_origin="https://$HOST:8443"; ops_public="https://$HOST:8443"; fi
-  # All-in-one: customer app reports usage to the co-located control plane.
+  # Customer → control-plane wiring. All-in-one talks to the co-located control
+  # plane; a standalone customer uses --ops-url when attached to a remote one.
   cust_ops_url=""
-  if [ "$ROLE" = all ]; then cust_ops_url="http://control-plane:8080"; fi
+  if   [ "$ROLE" = all ];          then cust_ops_url="http://control-plane:8080"
+  elif [ -n "$OPS_URL_FLAG" ];     then cust_ops_url="$OPS_URL_FLAG"; fi
 
   local db_password customer_jwt ops_jwt ops_shared
   db_password="$(gen_or_keep DB_PASSWORD 24)"
   customer_jwt="$(gen_or_keep CUSTOMER_JWT_SECRET 32)"
   ops_jwt="$(gen_or_keep OPS_JWT_SECRET 32)"
-  ops_shared="$(gen_or_keep OPS_SHARED_SECRET 32)"
+  # A control-plane-provisioned customer must use the shared secret the control
+  # plane stored for it; otherwise generate (and preserve) a local one.
+  if [ -n "$OPS_SECRET_FLAG" ]; then ops_shared="$OPS_SECRET_FLAG"; else ops_shared="$(gen_or_keep OPS_SHARED_SECRET 32)"; fi
   OPS_ADMIN_PASSWORD="$(existing_env OPS_ADMIN_PASSWORD)"
   if [ -n "$OPS_ADMIN_PASSWORD" ]; then OPS_PW_FRESH=0; else OPS_ADMIN_PASSWORD="$(openssl rand -hex 12)"; OPS_PW_FRESH=1; fi
 

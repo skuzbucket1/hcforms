@@ -47,6 +47,36 @@ A Docker Compose stack under `/opt/hcforms`, with data under `/var/hcforms`
 Routing (role `all`): customer app at `https://<host>/`, control plane at
 `https://<host>:8443/`.
 
+## Topologies
+
+**All-in-one (default).** `--role all` puts both planes on one box — customer app
+at `https://<host>/`, control plane at `https://<host>:8443/`. Ideal for a single
+tenant, a pilot, or a demo. (Don't run the control plane's *Redeploy* against the
+auto-registered `local` customer on an all-in-one box — it would overwrite the
+combined compose.)
+
+**A fleet (control plane on its own host + N customer hosts).** For real
+multi-customer use, host the control plane separately and give each customer its
+own VM:
+
+1. **Control-plane host** — run with `--role control-plane`:
+   ```bash
+   curl -fsSL .../install.sh | sudo bash -s -- \
+     --role control-plane --domain ops.example.com --email you@example.com
+   ```
+   The ops UI/API is served on `https://ops.example.com/` (port **443**, since it's
+   the only app on the box). Log in with the printed admin password.
+
+2. **Each customer** — create the customer in the control-plane UI, click
+   **Provision**, and run the generated bootstrap script on that customer's fresh
+   VM. The script points the customer's `OPS_API_URL` at this control plane (its
+   public URL) with a per-customer shared secret, so usage metering and runtime
+   config — LLM provider/model/keys and white-label branding — flow automatically,
+   with no redeploy. Update a customer's images later from the UI via **Redeploy**.
+
+(`--role customer` alone installs a *standalone* customer box with no control-plane
+integration; attach one to a control plane using the Provision flow above.)
+
 ## Options
 
 | Flag | Default | Meaning |
@@ -62,8 +92,15 @@ Routing (role `all`): customer app at `https://<host>/`, control plane at
 | `--registry <ref>` | `ghcr.io/skuzbucket1/hcforms` | image namespace |
 | `--registry-user` / `--registry-token` | — | auth for private images |
 | `--customer-id <id>` | `local` | id stamped on the customer app |
+| `--customer-api-image` / `--customer-web-image <ref>` | — | exact image refs (override `--registry`/`--tag`) |
+| `--ops-url <url>` / `--ops-secret <secret>` | — | attach a customer to a control plane (normally set by the Provision flow) |
 | `--no-systemd` | | skip the boot-time service unit |
 | `--build` | | build images from a source checkout instead of pulling |
+
+> The control plane's **Provision** uses this same installer: the bootstrap
+> script it generates authorises its SSH key, then runs
+> `install.sh --role customer …` with the flags above — so there is a single
+> definition of the customer stack.
 
 ## Requirements
 
