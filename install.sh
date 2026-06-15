@@ -207,6 +207,7 @@ services:
       DEFAULT_LLM_MODEL_ID: ${DEFAULT_LLM_MODEL_ID}
       EXTRACTION_MODEL_ID: ${EXTRACTION_MODEL_ID}
       CERTBOT_EMAIL: ${CERTBOT_EMAIL}
+      OPS_TLS_INSECURE: ${OPS_TLS_INSECURE}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
       interval: 15s
@@ -505,6 +506,11 @@ write_env() {
   if [ -n "$OPS_SECRET_FLAG" ]; then ops_shared="$OPS_SECRET_FLAG"; else ops_shared="$(gen_or_keep OPS_SHARED_SECRET 32)"; fi
   local ops_verify_tls="true"
   if [ "$OPS_INSECURE" = 1 ]; then ops_verify_tls="false"; fi
+  # A self-signed control plane has no real cert for customers to verify, so it
+  # tells them to trust it (its bootstraps pass --ops-insecure). A real cert
+  # (Let's Encrypt) leaves customers verifying — the secure production default.
+  local ops_tls_insecure="false"
+  if [ "$TLS_MODE" = selfsigned ]; then ops_tls_insecure="true"; fi
   OPS_ADMIN_PASSWORD="$(existing_env OPS_ADMIN_PASSWORD)"
   if [ -n "$OPS_ADMIN_PASSWORD" ]; then OPS_PW_FRESH=0; else OPS_ADMIN_PASSWORD="$(openssl rand -hex 12)"; OPS_PW_FRESH=1; fi
 
@@ -551,6 +557,7 @@ OPS_PUBLIC_URL=$ops_public
 SUPPORTED_REGIONS=local
 DEFAULT_LLM_MODE=$LLM_MODE
 CERTBOT_EMAIL=$EMAIL
+OPS_TLS_INSECURE=$ops_tls_insecure
 EOF
   chmod 600 "$APP_DIR/.env"
 }
