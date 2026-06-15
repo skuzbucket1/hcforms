@@ -30,6 +30,7 @@ REGISTRY_TOKEN=""
 CUSTOMER_ID="local"
 OPS_URL_FLAG=""                         # control-plane public URL (wires a customer to it)
 OPS_SECRET_FLAG=""                      # control-plane-issued per-customer shared secret
+OPS_INSECURE=0                          # 1 = trust a self-signed/private-CA control plane
 CUSTOMER_API_IMAGE_FLAG=""              # full image ref (overrides REGISTRY/TAG)
 CUSTOMER_WEB_IMAGE_FLAG=""              # full image ref (overrides REGISTRY/TAG)
 INSTALL_SYSTEMD=1
@@ -70,6 +71,7 @@ while [ $# -gt 0 ]; do
     --customer-id)     CUSTOMER_ID="$2"; shift 2 ;;
     --ops-url)         OPS_URL_FLAG="$2"; shift 2 ;;
     --ops-secret)      OPS_SECRET_FLAG="$2"; shift 2 ;;
+    --ops-insecure)    OPS_INSECURE=1; shift ;;
     --customer-api-image) CUSTOMER_API_IMAGE_FLAG="$2"; shift 2 ;;
     --customer-web-image) CUSTOMER_WEB_IMAGE_FLAG="$2"; shift 2 ;;
     --no-systemd)      INSTALL_SYSTEMD=0; shift ;;
@@ -135,6 +137,7 @@ services:
       ALLOWED_ORIGINS: ${CUSTOMER_ALLOWED_ORIGINS}
       OPS_API_URL: ${OPS_API_URL}
       OPS_SHARED_SECRET: ${OPS_SHARED_SECRET}
+      OPS_VERIFY_TLS: ${OPS_VERIFY_TLS}
       MONTHLY_TOKEN_CAP: ${MONTHLY_TOKEN_CAP}
     volumes:
       - /var/hcforms/files:/var/hcforms/files
@@ -166,6 +169,7 @@ services:
       EXTRACTION_MODEL_ID: ${EXTRACTION_MODEL_ID}
       OPS_API_URL: ${OPS_API_URL}
       OPS_SHARED_SECRET: ${OPS_SHARED_SECRET}
+      OPS_VERIFY_TLS: ${OPS_VERIFY_TLS}
       MONTHLY_TOKEN_CAP: ${MONTHLY_TOKEN_CAP}
     volumes:
       - /var/hcforms/files:/var/hcforms/files
@@ -272,6 +276,20 @@ ensure_docker() {
   fi
   systemctl enable --now docker >/dev/null 2>&1 || true
   docker compose version >/dev/null 2>&1 || die "Docker Compose plugin is not available."
+}
+
+# A control-plane-managed customer is redeployed over SSH, so it needs sshd.
+# Real VPSes already run it; minimal/container images may not.
+ensure_sshd() {
+  if systemctl list-unit-files 2>/dev/null | grep -qE '^ssh(d)?\.service'; then
+    systemctl enable --now ssh >/dev/null 2>&1 || systemctl enable --now sshd >/dev/null 2>&1 || true
+    return 0
+  fi
+  log "Installing openssh-server (the control plane manages this box over SSH)..."
+  if   have apt-get; then DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-server >/dev/null 2>&1 || warn "sshd install had issues";
+  elif have dnf;     then dnf install -y -q openssh-server >/dev/null 2>&1 || warn "sshd install had issues";
+  elif have yum;     then yum install -y -q openssh-server >/dev/null 2>&1 || warn "sshd install had issues"; fi
+  systemctl enable --now ssh >/dev/null 2>&1 || systemctl enable --now sshd >/dev/null 2>&1 || true
 }
 
 # ── 3. Directories + embedded files ──────────────────────────────────────────
@@ -485,6 +503,8 @@ write_env() {
   # A control-plane-provisioned customer must use the shared secret the control
   # plane stored for it; otherwise generate (and preserve) a local one.
   if [ -n "$OPS_SECRET_FLAG" ]; then ops_shared="$OPS_SECRET_FLAG"; else ops_shared="$(gen_or_keep OPS_SHARED_SECRET 32)"; fi
+  local ops_verify_tls="true"
+  if [ "$OPS_INSECURE" = 1 ]; then ops_verify_tls="false"; fi
   OPS_ADMIN_PASSWORD="$(existing_env OPS_ADMIN_PASSWORD)"
   if [ -n "$OPS_ADMIN_PASSWORD" ]; then OPS_PW_FRESH=0; else OPS_ADMIN_PASSWORD="$(openssl rand -hex 12)"; OPS_PW_FRESH=1; fi
 
@@ -520,6 +540,7 @@ MONTHLY_TOKEN_CAP=0
 CUSTOMER_ALLOWED_ORIGINS=$cust_origin
 OPS_API_URL=$cust_ops_url
 OPS_SHARED_SECRET=$ops_shared
+OPS_VERIFY_TLS=$ops_verify_tls
 
 # Control plane
 OPS_JWT_SECRET=$ops_jwt
@@ -646,6 +667,7 @@ summary() {
 umask 077
 preflight
 ensure_docker
+if [ "$ROLE" = customer ]; then ensure_sshd; fi
 make_dirs
 resolve_images
 resolve_host
